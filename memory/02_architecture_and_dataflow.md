@@ -1,132 +1,114 @@
-# Architecture & Data Flow Context
+# Architecture & Data Flow Specification
 
-This document details the system design, lead capture pipeline, decision trees, workflow state machine, and background scheduling engines.
-
----
-
-## 1. System Microservices Architecture
-
-```
-                      ┌─────────────────────────────────────────┐
-                      │             Inbound Webhooks            │
-                      │  WhatsApp / IG / FB / Email / Web Form  │
-                      └────────────────────┬────────────────────┘
-                                           │
-                                           ▼
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                                 API Gateway (Port 3000)                                │
-│                                                                                        │
-│  ┌────────────────────┐    ┌─────────────────────┐    ┌─────────────────────────────┐  │
-│  │ WebhookController  │───>│     LeadService     │───>│       RoutingService        │  │
-│  └────────────────────┘    └─────────────────────┘    └──────────────┬──────────────┘  │
-│                                                                      │                 │
-│                            ┌─────────────────────┐                   │                 │
-│                            │   CategoryService   │<──────────────────┘                 │
-│                            └─────────────────────┘                                     │
-└──────────────────────────────────────┬─────────────────────────────────────────────────┘
-                                       │
-                ┌──────────────────────┴──────────────────────┐
-                ▼                                             ▼
-┌───────────────────────────────┐             ┌───────────────────────────────┐
-│ Communication Service (3001)  │             │   Workflow Service (3002)     │
-│                               │             │                               │
-│  - WhatsApp Cloud API Handler │             │  - Workflow State Machine     │
-│  - Email Nodemailer Handler   │             │  - Promise Scheduler (Cron)   │
-│  - Instagram / Facebook API   │             │  - Retry & Escalation Engine  │
-└───────────────────────────────┘             └───────────────────────────────┘
-```
+This document details the system architecture, component interactions, lead routing rules, state machine transitions, and event flow pipelines.
 
 ---
 
-## 2. Lead Capture & Routing Sequence
+## 1. System Architecture Diagram
 
 ```
-Inbound Payload Received (Webhook Controller)
-                      │
-                      ▼
-            Category Detection
-     (Match text against keywords)
-                      │
-                      ▼
-             Capture Lead Record
-   (Store Lead, Conversation, Message)
-                      │
-                      ▼
-              Evaluate Phone Number
-                      │
-       ┌──────────────┴──────────────┐
-       ▼                             ▼
-Has Valid Phone?             No Phone Available?
-(starts with "+")                    │
-       │                             ▼
-       ▼                   Is Channel Two-Way?
-Route to WhatsApp           (IG, FB, Email, Web Chat)
-(Status -> 'information_shared')     │
-                               ┌─────┴─────┐
-                               ▼           ▼
-                              YES          NO
-                               │           │
-                               ▼           ▼
-                        Send WA Request   Flag Admin
-                        (Status ->        Attention
-                         'waiting')
++-----------------------------------------------------------------------------------+
+|                                EVENT PRODUCERS                                    |
+| (Lead Capture, Response, Workflow, Scheduler, Follow-up, Meeting, Admin Portal)   |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v (Events)
++-----------------------------------------+-----------------------------------------+
+|                        AUTOMATION ORCHESTRATOR / REST BUS                         |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v
++-----------------------------------------+-----------------------------------------+
+|             ENGINE 5: CONVERSATION TIMELINE ENGINE (Port 3003)                    |
+|                                                                                   |
+|  +---------------------+   +---------------------+   +-------------------------+  |
+|  |   Event Consumer    | ->|   Event Validator   | ->|   Event Transformer     |  |
+|  +---------------------+   +---------------------+   +-------------------------+  |
+|                                                                   |               |
+|  +---------------------+   +---------------------+                v               |
+|  |  Timeline Dashboard | <-|  Timeline Service   | <-+-------------------------+  |
+|  |  (http://locahost)  |   |    & REST APIs      |   |  PostgreSQL Repository  |  |
+|  +---------------------+   +---------------------+   +-------------------------+  |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v
++-----------------------------------------+-----------------------------------------+
+|                    TIMELINE DATABASE (Supabase PostgreSQL)                        |
+|                            `timeline_events` Table                                |
++-----------------------------------------------------------------------------------+
 ```
 
 ---
 
-## 3. Detailed Routing & Phone Extraction Logic
+## 2. Conversation Timeline Engine Architecture (Engine 5)
 
-### A. Category Detection Engine
-- Operates on inbound message text (`CategoryService.detectCategories`).
-- Keywords checked:
-  - `fee_enquiry`: `"fee"`, `"fees"`, `"cost"`, `"price"`, `"tuition"`, `"structure"`
-  - `course_enquiry`: `"course"`, `"program"`, `"degree"`, `"syllabus"`, `"branch"`, `"engineering"`, `"btech"`, `"mtech"`, `"mba"`
-  - `admission_enquiry`: `"admission"`, `"enroll"`, `"apply"`, `"eligibility"`, `"criteria"`, `"last date"`, `"seat"`
-  - `branch_enquiry`: `"location"`, `"address"`, `"campus"`, `"where"`, `"city"`
-  - `faculty_enquiry`: `"faculty"`, `"teacher"`, `"professor"`, `"staff"`
-  - `hostel_enquiry`: `"hostel"`, `"accommodation"`, `"stay"`, `"mess"`, `"food"`
-- Returns an array of detected category strings (e.g. `["fee_enquiry", "course_enquiry"]`). Defaults to `["general_enquiry"]` if none match.
+The **Conversation Timeline Engine** is a central history microservice. Instead of every engine storing its own history independently, every producer engine publishes events to the Orchestrator/Timeline Engine.
 
-### B. Message Composition (`CategoryService.composeAskMessage`)
-When a lead reaches via a non-WhatsApp channel without a phone number:
-1. Builds a dynamic topic list from detected categories.
-2. Composes tailored text (e.g., *"Thank you for your interest in our fee structure and courses! Please share your WhatsApp number so we can send full details."*).
-3. Transmits message via target channel and schedules a 2-hour check promise.
+### Layer Responsibilities
 
-### C. Reply Processing & Phone Extraction (`LeadService.processReply`)
-When an existing lead in `waiting` state replies:
-1. Regex scanner scans message for phone pattern: `/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\+\d{10,15}/`.
-2. If phone is detected:
-   - Updates `Lead.phone` with extracted number.
-   - Clears `needs_whatsapp` flag.
-   - Transitions `Lead.status` from `waiting` -> `new`.
-   - Cancels pending `check_reply` promises for this lead.
-   - Triggers `RoutingService.routeToWhatsApp()` to send welcome details on WhatsApp and update status to `information_shared`.
+1. **Event Consumer (`EventConsumerService`)**:
+   - Ingests event payloads from REST endpoint (`POST /api/v1/events/publish`) or NestJS Event Emitter (`orchestrator.event.published`).
+   - Completely decoupled from producer engines; only receives raw payload.
 
----
+2. **Event Validator (`EventValidatorService`)**:
+   - Validates `workflowId` (UUID format) and `leadId` (UUID format).
+   - Validates non-empty `eventType` and `sourceEngine`.
+   - Validates `occurredAt` timestamp.
+   - Enforces **idempotency & deduplication** via `deduplicationKey` to prevent duplicate writes during retries.
 
-## 4. Lead Workflow States
+3. **Event Transformer (`EventTransformerService`)**:
+   - Standardizes engine-specific payloads into a uniform model: `{ type, title, description, actorType, sourceEngine, metadata }`.
 
-| State | Enums Value | Trigger / Condition |
-|---|---|---|
-| `new` | `LeadStatus.NEW` | Lead record created; phone pending routing or just extracted |
-| `waiting` | `LeadStatus.WAITING` | No phone number; requested WhatsApp phone number via two-way channel |
-| `information_shared` | `LeadStatus.INFORMATION_SHARED` | Welcome message & course details successfully dispatched via WhatsApp |
-| `interested` | `LeadStatus.INTERESTED` | Lead replied positively to WhatsApp info; follow-up scheduled |
-| `applied` | `LeadStatus.APPLIED` | Lead submitted formal admission application |
-| `admitted` | `LeadStatus.ADMITTED` | Admission confirmed / student enrolled |
-| `closed` | `LeadStatus.CLOSED` | Lead closed (not interested / lost) |
+4. **Timeline Service (`TimelineService`)**:
+   - Provides functions for timeline creation, retrieval (`getWorkflowTimeline`, `getLeadTimeline`), keyword search, engine filtering, pagination, chronological sorting, and internal note creation.
+   - Contains NO business decision logic (does not send messages, schedule calls, or change state).
+
+5. **PostgreSQL Repository (`TimelineRepository`)**:
+   - Handles database persistence to Supabase PostgreSQL `timeline_events` table using Prisma ORM.
+   - Features indexed fields (`workflow_id`, `lead_id`, `occurred_at`) and `JSONB` metadata storage.
+   - Includes automatic in-memory fallback store when database connection is pending.
 
 ---
 
-## 5. Promise Scheduler & Execution Engine
+## 3. Producer Engine Events Taxonomy
 
-- **Scheduler Location**: `packages/workflow-service/src/engine/promise.engine.ts`
-- **Schedule Frequency**: Runs every 30 seconds (`@Cron('*/30 * * * * *')`).
-- **Execution Flow**:
-  1. Queries all `PromiseEntity` records where `status = 'pending'` AND `scheduled_at <= NOW()`.
-  2. For each due promise:
-     - Marks status as `processing`.
-     - Executes promise payload handler (e.g., re-checking reply status, sending reminder message, escalating to admin).
-     - On Success: Marks status as `completed`, logs timeline audit event.
-     - On Failure: Evaluates retry count (`retries_left`). If `retries_left > 0`, reschedules for `+5 minutes` and decrements count. If `0`, marks as `failed` and notifies admin.
+- **Lead Capture Engine**: `LEAD_CREATED`, `LEAD_UPDATED`, `LEAD_SOURCE_IDENTIFIED`
+- **Response Engine**: `MESSAGE_SENT`, `BROCHURE_SHARED`, `FEE_STRUCTURE_SHARED`, `COURSE_DETAILS_SHARED`
+- **Workflow Engine**: `WORKFLOW_STARTED`, `WORKFLOW_PAUSED`, `WORKFLOW_RESUMED`, `WORKFLOW_CLOSED`, `STATE_CHANGED`
+- **Scheduler Engine**: `REMINDER_SCHEDULED`, `REMINDER_CANCELLED`, `REMINDER_EXECUTED`
+- **Follow-up Engine**: `FOLLOWUP_SENT`, `RECOVERY_INITIATED`
+- **Meeting Engine**: `CALL_COMPLETED`, `MEETING_SCHEDULED`, `MEETING_UPDATED`, `MEETING_COMPLETED`
+- **Admin Portal**: `INTERNAL_NOTE_ADDED`, `LEAD_ASSIGNED`, `DOCUMENT_UPLOADED`
+
+---
+
+## 4. End-to-End Event Sequences
+
+### Scenario 1: New Lead Ingestion Sequence
+```
+Website Form / Google Ads
+    │
+    ▼
+Lead Capture Engine (Creates Lead)
+    │
+    ▼ Lead Created Event
+Automation Orchestrator
+    │
+    ▼ Publish Event
+Timeline Engine
+    ├─► 1. Event Consumer Ingests
+    ├─► 2. Event Validator Checks UUID & Deduplication Key
+    ├─► 3. Event Transformer Standardizes to Common Model
+    └─► 4. Save to PostgreSQL `timeline_events` Table
+```
+
+### Scenario 2: Counseling Meeting Completion
+```
+Meeting Engine (Call Finished)
+    │
+    ▼ Meeting Completed Event
+Automation Orchestrator
+    │
+    ▼ Ingest Event
+Timeline Engine ──► Store in Database ──► Real-Time Dashboard UI Updated
+```

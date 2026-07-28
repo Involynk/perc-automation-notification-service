@@ -11,8 +11,9 @@
     "start:api": "nest start api-gateway",
     "start:workflow": "nest start workflow-service",
     "start:comm": "nest start communication-service",
+    "start:timeline": "nest start timeline-service",
     "dev": "npm run build:shared && nest start api-gateway",
-    "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & wait)",
+    "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & nest start timeline-service & wait)",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces"
   },

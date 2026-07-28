@@ -7,18 +7,18 @@ This document establishes standard operating procedures, execution guardrails, v
 ## 1. Principles of Engagement
 
 1. **Monorepo Build Dependency**:
-   - `packages/shared` must ALWAYS be compiled (`npm run build:shared`) before running or building dependant microservices (`api-gateway`, `communication-service`, `workflow-service`).
+   - `packages/shared` must ALWAYS be compiled (`npm run build:shared`) before running or building dependent microservices (`api-gateway`, `communication-service`, `workflow-service`, `timeline-service`).
    - Node packages reference shared entities and types via standard TypeScript project references or compiled output in `packages/shared/dist`.
 
 2. **Codebase Preservation**:
-   - Do NOT edit core function signatures or API endpoints without checking all call sites across `packages/api-gateway`, `packages/communication-service`, and `packages/workflow-service`.
+   - Do NOT edit core function signatures or API endpoints without checking all call sites across `packages/api-gateway`, `packages/communication-service`, `packages/workflow-service`, and `packages/timeline-service`.
 
 3. **Database & Schema Updates**:
-   - In development, TypeORM SQLite auto-synchronizes schema (`synchronize: true`).
-   - If adding or modifying fields on TypeORM entities (`packages/shared/src/entities/*.ts`), remember to update `memory/03_database_and_entities.md` to reflect schema changes.
+   - In development, Prisma auto-synchronizes schema (`npx prisma db push`).
+   - If adding or modifying fields on Prisma models or TypeORM entities (`packages/shared/src/entities/*.ts`), update `memory/03_database_and_entities.md` to reflect schema changes.
 
 4. **Audit Trail Requirement**:
-   - Any new lead action, state transition, or message event MUST log a record to `TimelineEvent` via `LeadService` or `RoutingService` to preserve full system auditability.
+   - Any new lead action, state transition, or message event MUST log a record to `TimelineEvent` via `TimelineService` or `EventConsumerService` to preserve full system auditability.
 
 ---
 
@@ -29,7 +29,10 @@ This document establishes standard operating procedures, execution guardrails, v
 # 1. Build shared library (REQUIRED FIRST STEP)
 npm run build:shared
 
-# 2. Build all workspaces
+# 2. Generate Prisma client for Timeline Engine
+npx prisma generate --schema=packages/timeline-service/prisma/schema.prisma
+
+# 3. Build all workspaces
 npm run build:all
 ```
 
@@ -42,6 +45,7 @@ npm run dev:all
 npm run start:api       # API Gateway (Port 3000)
 npm run start:comm      # Communication Service (Port 3001)
 npm run start:workflow  # Workflow Service (Port 3002)
+npm run start:timeline  # Engine 5: Conversation Timeline Engine (Port 3003)
 
 # Option C: Run via Docker Compose
 docker compose up --build
@@ -63,7 +67,7 @@ Whenever a developer or AI agent makes changes to this project, follow this prot
    - Add an entry for the new file in `memory/01_code_file_status.md` with its purpose, exports, and status.
 
 2. **Modifying Architecture or Data Flow**:
-   - Update `memory/02_architecture_and_dataflow.md` if lead routing logic, category matching, or promise handling changes.
+   - Update `memory/02_architecture_and_dataflow.md` if lead routing logic, category matching, or timeline flows change.
 
 3. **Modifying Database Entities**:
    - Update `memory/03_database_and_entities.md` with new columns, tables, or relations.

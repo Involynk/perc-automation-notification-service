@@ -32,6 +32,18 @@
       "compilerOptions": {
         "tsConfigPath": "packages/workflow-service/tsconfig.json"
       }
+    },
+    "timeline-service": {
+      "type": "application",
+      "root": "packages/timeline-service",
+      "entryFile": "main",
+      "sourceRoot": "packages/timeline-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "packages/timeline-service/tsconfig.json",
+        "assets": [
+          { "include": "../public/**/*", "outDir": "dist/packages/timeline-service/public", "watchAssets": true }
+        ]
+      }
     }
   }
 }

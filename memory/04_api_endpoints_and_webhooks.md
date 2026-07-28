@@ -1,109 +1,65 @@
-# API Endpoints & Webhooks Specification
+# API Endpoints & Webhook Specification
 
-This document contains the complete specification of all REST endpoints, webhook verification algorithms, request/response structures, and inter-service HTTP calls.
-
----
-
-## 1. API Gateway Endpoints (`packages/api-gateway` — Port 3000)
-
-### Webhook Verification & Processing Controllers (`WebhookController`)
-
-#### 1. WhatsApp Cloud API Webhook
-- **`GET /webhooks/whatsapp`**
-  - **Query Params**: `hub.mode`, `hub.verify_token`, `hub.challenge`
-  - **Behavior**: Compares `hub.verify_token` against `WHATSAPP_WEBHOOK_VERIFY_TOKEN` (default: `perc_webhook_verify_2026`). Returns `hub.challenge` if valid.
-- **`POST /webhooks/whatsapp`**
-  - **Body**: Meta WhatsApp Cloud API payload object.
-  - **Behavior**: Extracts sender phone, profile name, message text/media, calls `LeadService.captureInboundLead()`. Returns `{ status: "ok" }`.
-
-#### 2. Instagram Messaging Webhook
-- **`GET /webhooks/instagram`**
-  - **Query Params**: `hub.mode`, `hub.verify_token`, `hub.challenge`
-  - **Behavior**: Validates `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`.
-- **`POST /webhooks/instagram`**
-  - **Body**: Meta Instagram webhook payload.
-  - **Behavior**: Extracts Instagram IGSID, message text/attachments, calls `LeadService.captureInboundLead()`.
-
-#### 3. Facebook Messenger Webhook
-- **`GET /webhooks/facebook`** / **`POST /webhooks/facebook`**
-  - **Behavior**: Same structure as Instagram/WhatsApp, handling FB Page Scoped User IDs (PSID).
-
-#### 4. Email Inbound Webhook / Poller
-- **`POST /webhooks/email/poll`**
-  - **Behavior**: Inbound email capture hook receiving email body, sender email address, and subject line.
+This document details all REST controllers, endpoints, query filters, and webhook contracts across the monorepo microservices.
 
 ---
 
-### Lead Management Endpoints (`LeadController` — `/api/leads`)
+## 1. Timeline Engine Service (`packages/timeline-service` — Port 3003)
 
-| Method | Endpoint Path | Description | Query / Body Parameters |
-|---|---|---|---|
-| `POST` | `/api/leads/capture` | Generic lead capture endpoint | `{ source, first_name, phone, email, message }` |
-| `GET` | `/api/leads` | List leads with pagination & status filters | `?status=new&page=1&limit=20` |
-| `GET` | `/api/leads/:id` | Get detailed lead record | Includes Lead, Conversation, Workflow & Timeline |
-| `PATCH` | `/api/leads/:id/status` | Update lead status manually | `{ status: "interested" }` |
-| `GET` | `/api/leads/:id/timeline` | Fetch audit timeline events for lead | Array of `TimelineEvent` records |
+Interactive Swagger API documentation available at `http://localhost:3003/api/docs`.
 
----
+### REST Endpoints Summary
 
-### Message Endpoints (`MessageController` — `/api/messages`)
+| Method | Endpoint Path | Summary | Query / Body Parameters |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/events/publish` | Publish an event from any producer engine | `PublishEventDto` (workflowId, leadId, eventType, sourceEngine, actorType, title, description, metadata, deduplicationKey) |
+| `GET` | `/api/v1/workflows/:workflowId/timeline` | Get full chronological timeline for a workflow | `TimelineQueryDto` (`type`, `sourceEngine`, `search`, `page`, `limit`, `sort`) |
+| `GET` | `/api/v1/leads/:leadId/timeline` | Get timeline for a lead across workflows | `TimelineQueryDto` (`type`, `sourceEngine`, `search`, `page`, `limit`, `sort`) |
+| `GET` | `/api/v1/timeline/search` | Platform-wide timeline search and filter | `TimelineQueryDto` (`type`, `sourceEngine`, `search`, `page`, `limit`, `sort`) |
+| `GET` | `/api/v1/timeline/:eventId` | Get event details & JSONB metadata | `eventId` (UUID) |
+| `POST` | `/api/v1/workflows/:workflowId/notes` | Add an internal note to workflow timeline | `CreateNoteDto` (leadId, title, description, actorId) |
+| `GET` | `/api/v1/engines/stats` | Get engine analytics & event counters | N/A |
 
-| Method | Endpoint Path | Description | Request Body |
-|---|---|---|---|
-| `POST` | `/api/messages` | Process inbound/outbound manual message | `{ lead_id, channel, text, direction }` |
-| `GET` | `/api/messages/lead/:leadId` | Fetch message history for a lead | Returns ordered `Message` list |
-
----
-
-### Promise Endpoints (`PromiseController` — `/api/promises`)
-
-| Method | Endpoint Path | Description | Request Body |
-|---|---|---|---|
-| `POST` | `/api/promises` | Manually schedule a promise | `{ lead_id, promise_type, scheduled_at, payload }` |
-| `POST` | `/api/promises/:id/execute` | Immediately trigger promise execution | N/A |
-| `DELETE` | `/api/promises/:id` | Cancel a pending promise | N/A |
-
----
-
-### Workflow Endpoints (`WorkflowController` — `/api/workflows`)
-
-| Method | Endpoint Path | Description | Request Body |
-|---|---|---|---|
-| `GET` | `/api/workflows/lead/:leadId` | Get current workflow instance for lead | Returns `WorkflowInstance` |
-| `POST` | `/api/workflows/transition` | Manually trigger state transition | `{ lead_id, to_state, reason }` |
+### Sample Payload: Publishing an Event
+`POST /api/v1/events/publish`
+```json
+{
+  "workflowId": "11111111-2222-3333-4444-555555555555",
+  "leadId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "eventType": "MEETING_COMPLETED",
+  "sourceEngine": "MEETING",
+  "actorType": "Admin",
+  "title": "Meeting Completed",
+  "description": "Counseling session completed with positive outcome",
+  "metadata": {
+    "durationMinutes": 30,
+    "counselor": "Sarah Jenkins",
+    "recordingUrl": "https://storage.supabase.co/recordings/meeting_998.mp4"
+  },
+  "deduplicationKey": "evt_meeting_comp_998"
+}
+```
 
 ---
 
-## 2. Communication Service Endpoints (`packages/communication-service` — Port 3001)
+## 2. API Gateway (`packages/api-gateway` — Port 3000)
 
-### Outbound Message Dispatcher
-
-- **`POST /api/communication/send`**
-  - **Description**: Universal outbound message endpoint invoked by API Gateway or Workflow Service.
-  - **Request Body**:
-    ```json
-    {
-      "channel": "whatsapp",
-      "recipient": "+1234567890",
-      "content": "Hello! Thank you for inquiring about B.Tech Computer Science.",
-      "content_type": "text",
-      "metadata": {
-        "template_name": "welcome_info"
-      }
-    }
-    ```
-  - **Response**:
-    ```json
-    {
-      "success": true,
-      "message_id": "wamid.HBgLMTIzNDU2Nzg5MA...",
-      "status": "sent"
-    }
-    ```
+- `GET /health`: Gateway status check
+- `POST /webhooks/whatsapp`: WhatsApp Cloud API webhook receiver
+- `POST /webhooks/instagram`: Instagram messaging webhook receiver
+- `POST /webhooks/facebook`: Facebook Messenger webhook receiver
+- `GET /api/leads`: Query lead list and state
+- `POST /api/leads/capture`: Custom web form lead capture
 
 ---
 
-## 3. Workflow Service Endpoints (`packages/workflow-service` — Port 3002)
+## 3. Communication Service (`packages/communication-service` — Port 3001)
 
-- **`GET /health`**: Health check endpoint returning `{ status: "ok", service: "workflow-service" }`.
-- **`POST /api/workflow-service/promises/run-due`**: Endpoint to manually trigger the promise evaluation run outside of the 30-second cron cycle.
+- `POST /api/communication/send`: Send outbound message via specified channel (`whatsapp`, `email`, `instagram`, `facebook`)
+
+---
+
+## 4. Workflow Service (`packages/workflow-service` — Port 3002)
+
+- `GET /health`: Health status
+- `POST /api/workflows/trigger`: Trigger state transition
