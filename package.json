@@ -15,6 +15,8 @@
     "dev": "npm run build:shared && nest start api-gateway",
     "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & nest start timeline-service & wait)",
     "test": "npm run test --workspaces",
+    "test:bus": "npx ts-node scripts/test-bus-orchestration.ts",
+    "test:supabase": "npx ts-node scripts/test-supabase-connection-and-seed.ts",
     "lint": "npm run lint --workspaces"
   },
   "devDependencies": {
