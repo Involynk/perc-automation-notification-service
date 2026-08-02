@@ -44,6 +44,15 @@
           { "include": "../public/**/*", "outDir": "dist/packages/timeline-service/public", "watchAssets": true }
         ]
       }
+    },
+    "notification-service": {
+      "type": "application",
+      "root": "packages/notification-service",
+      "entryFile": "main",
+      "sourceRoot": "packages/notification-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "packages/notification-service/tsconfig.json"
+      }
     }
   }
 }

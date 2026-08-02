@@ -12,10 +12,12 @@
     "start:workflow": "nest start workflow-service",
     "start:comm": "nest start communication-service",
     "start:timeline": "nest start timeline-service",
+    "start:notification": "nest start notification-service",
     "dev": "npm run build:shared && nest start api-gateway",
-    "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & nest start timeline-service & wait)",
+    "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & nest start timeline-service & nest start notification-service & wait)",
     "test": "npm run test --workspaces",
     "test:bus": "npx ts-node scripts/test-bus-orchestration.ts",
+    "test:notification": "npx ts-node scripts/test-notification-engine.ts",
     "test:supabase": "npx ts-node scripts/test-supabase-connection-and-seed.ts",
     "test:mock": "npx ts-node packages/mock-orchestrator/src/run.ts",
     "lint": "npm run lint --workspaces"
