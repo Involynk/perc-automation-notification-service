@@ -111,7 +111,37 @@ model TimelineEvent {
 }
 ```
 
-### 3.3 REST Endpoints
+### 3.3 Kafka Architecture & Event Contracts
+
+Engine 5 is fully Kafka-native, providing decoupled asynchronous event streaming, partition ordering, and DLQ routing:
+
+#### Input Topics (Domain Services ➔ Engine 5)
+- **`perc.timeline.events`**: Main event ingestion stream for all domain engines. Partitioned by `leadId` / `workflowId` for strict sequential ordering per lead.
+- **`perc.timeline.append-note-requested`**: Command topic for counselor & admin internal notes.
+- **`perc.timeline.events.dlq`**: Dead Letter Queue capturing unparseable/malformed payloads without halting stream consumption.
+
+#### Output Topic (Engine 5 ➔ Downstream Engines)
+- **`perc.timeline.event-recorded`**: Emits `TIMELINE_EVENT_RECORDED` payload upon successful persistence to Supabase PostgreSQL. Consumed by **Engine 6 (Follow-up)**, **Engine 9 (Analytics)**, **Engine 10 (Recommendation)**, and **Engine 8 (Notification)**.
+
+#### Kafka Event Schema
+```json
+{
+  "eventId": "evt-7a91b2c3-d4e5-4a1b-8c2d-3e4f5a6b7c8d",
+  "workflowId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "leadId": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+  "eventType": "MESSAGE_SENT",
+  "sourceEngine": "RESPONSE",
+  "actorType": "Bot",
+  "actorId": "bot-whatsapp-01",
+  "title": "WhatsApp Fee Brochure Sent",
+  "description": "Delivered B.Tech fee structure via WhatsApp",
+  "metadata": { "channel": "whatsapp", "template": "btech_fees" },
+  "deduplicationKey": "dedup_resp_msg_101",
+  "occurredAt": "2026-08-14T15:30:00.000Z"
+}
+```
+
+### 3.4 REST Endpoints
 
 | Method | Endpoint Path | Summary | Description / Parameters |
 |---|---|---|---|
@@ -122,6 +152,7 @@ model TimelineEvent {
 | `GET` | `/api/v1/timeline/:eventId` | Get Event Details | Fetches single event with full `JSONB` metadata |
 | `POST` | `/api/v1/workflows/:workflowId/notes` | Add Internal Note | Appends counselor internal note (`CreateNoteDto`) with `ADMIN` attribution |
 | `GET` | `/api/v1/engines/stats` | Engine Stats | Aggregated event counts grouped by engine, event type, and active workflows |
+
 
 ---
 

@@ -7,3 +7,4 @@ export * from './database-seed';
 export * from './supabase';
 export * from './event-bus-orchestrator';
 export * from './events';
+export * from './kafka';

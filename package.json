@@ -16,6 +16,7 @@
     "dev:all": "npm run build:shared && (nest start api-gateway & nest start workflow-service & nest start communication-service & nest start timeline-service & wait)",
     "test": "npm run test --workspaces",
     "test:bus": "npx ts-node scripts/test-bus-orchestration.ts",
+    "test:kafka": "npx ts-node scripts/test-kafka-timeline.ts",
     "test:supabase": "npx ts-node scripts/test-supabase-connection-and-seed.ts",
     "test:mock": "npx ts-node packages/mock-orchestrator/src/run.ts",
     "lint": "npm run lint --workspaces"
@@ -41,6 +42,7 @@
     "@supabase/supabase-js": "^2.110.8",
     "@types/nodemailer": "^8.0.1",
     "axios": "^1.18.1",
+    "kafkajs": "^2.2.4",
     "nodemailer": "^9.0.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
