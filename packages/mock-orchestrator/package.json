@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build": "tsc -p tsconfig.json",
     "start": "npx ts-node src/index.ts",
     "test": "npx ts-node src/run.ts"
   },

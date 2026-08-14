@@ -1,10 +1,10 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
-import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
-  const logger = new Logger('NotificationBootstrap');
+  const logger = new Logger('NotificationService');
   const app = await NestFactory.create(AppModule);
 
   app.enableCors();
@@ -12,23 +12,25 @@ async function bootstrap() {
     new ValidationPipe({
       whitelist: true,
       transform: true,
+      forbidNonWhitelisted: false,
     }),
   );
 
+  // Swagger Documentation Setup
   const config = new DocumentBuilder()
-    .setTitle('PERC Notification Engine API (Engine 8)')
-    .setDescription('Central administrative notification microservice for PERC Admission Operations Platform.')
+    .setTitle('PERC Notification Engine (Engine 8)')
+    .setDescription('Centralized operational alert & counselor inbox feed microservice with Kafka streaming.')
     .setVersion('1.0')
-    .addTag('Notification Engine (Engine 8)')
+    .addTag('Notifications')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  const port = process.env.NOTIFICATION_SERVICE_PORT || 3004;
+  const port = process.env.NOTIFICATION_SERVICE_PORT || process.env.PORT || 3004;
   await app.listen(port);
-
-  logger.log(`🚀 Pure Backend Notification Engine (Engine 8) running on port ${port}`);
-  logger.log(`📚 Swagger API Documentation: http://localhost:${port}/api/docs`);
+  logger.log(`🚀 PERC Notification Engine is running on port ${port}`);
+  logger.log(`📚 Swagger Docs available at http://localhost:${port}/api/docs`);
 }
+
 bootstrap();

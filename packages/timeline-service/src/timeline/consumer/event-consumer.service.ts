@@ -4,6 +4,7 @@ import { RawEngineEvent, TimelineEventRecord } from '../interfaces/timeline-even
 import { EventValidatorService } from '../validator/event-validator.service';
 import { EventTransformerService } from '../transformer/event-transformer.service';
 import { TimelineRepository } from '../repository/timeline.repository';
+import { TimelineKafkaPublisherService } from '../kafka/timeline-kafka-publisher.service';
 
 @Injectable()
 export class EventConsumerService {
@@ -13,6 +14,7 @@ export class EventConsumerService {
     private readonly validator: EventValidatorService,
     private readonly transformer: EventTransformerService,
     private readonly repository: TimelineRepository,
+    private readonly publisher: TimelineKafkaPublisherService,
   ) {}
 
   async consumeEvent(rawEvent: RawEngineEvent): Promise<TimelineEventRecord> {
@@ -21,6 +23,14 @@ export class EventConsumerService {
     const transformed = this.transformer.transform(rawEvent);
     const record = await this.repository.create(transformed);
     this.logger.log(`Saved timeline event ID: ${record.id}`);
+
+    // Broadcast to Kafka output topic perc.timeline.event-recorded
+    try {
+      await this.publisher.broadcastEventRecorded(record);
+    } catch (err: any) {
+      this.logger.warn(`Kafka event-recorded broadcast deferred: ${err.message}`);
+    }
+
     return record;
   }
 
@@ -33,3 +43,4 @@ export class EventConsumerService {
     }
   }
 }
+

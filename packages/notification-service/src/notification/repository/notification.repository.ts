@@ -1,180 +1,129 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { NotificationRecord, NotificationStats } from '../interfaces/notification.interface';
-import { QueryNotificationDto } from '../dto/query-notification.dto';
-import * as crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
+import {
+  NotificationRecord,
+  NotificationPriority,
+  PaginatedNotificationsResult,
+  NotificationStats,
+} from '../interfaces/notification.interface';
+import { NotificationQueryDto } from '../dto/query-notification.dto';
 
 @Injectable()
 export class NotificationRepository {
   private readonly logger = new Logger(NotificationRepository.name);
-  private memoryStore: NotificationRecord[] = [];
-
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly store: Map<string, NotificationRecord> = new Map();
 
   async create(data: Partial<NotificationRecord>): Promise<NotificationRecord> {
-    const id = data.id || crypto.randomUUID();
     const record: NotificationRecord = {
-      id,
+      id: data.id || `notif_${uuidv4()}`,
       userId: data.userId!,
       leadId: data.leadId || null,
       notificationType: data.notificationType!,
-      title: data.title!,
-      message: data.message!,
-      isRead: data.isRead || false,
-      readAt: data.readAt || null,
+      title: data.title || 'Notification',
+      message: data.message || '',
+      isRead: false,
+      readAt: null,
       actionUrl: data.actionUrl || null,
-      priority: data.priority || 'MEDIUM',
+      priority: data.priority || NotificationPriority.NORMAL,
       metadata: data.metadata || {},
-      createdAt: data.createdAt || new Date().toISOString(),
+      deduplicationKey: data.deduplicationKey || null,
+      createdAt: data.createdAt || new Date(),
     };
 
-    try {
-      if ((this.prisma as any).notification) {
-        const dbRecord = await (this.prisma as any).notification.create({
-          data: {
-            id,
-            userId: record.userId,
-            leadId: record.leadId,
-            notificationType: record.notificationType,
-            title: record.title,
-            message: record.message,
-            isRead: record.isRead,
-            actionUrl: record.actionUrl,
-            priority: record.priority,
-            metadata: record.metadata,
-          },
-        });
-        return this.mapDbToRecord(dbRecord);
-      }
-    } catch (error) {
-      this.logger.debug(`Prisma write skipped (${error.message}); utilizing in-memory repository fallback.`);
-    }
-
-    this.memoryStore.unshift(record);
+    this.store.set(record.id, record);
     return record;
   }
 
-  async findByUserId(userId: string, query: QueryNotificationDto): Promise<{ data: NotificationRecord[]; total: number; page: number; totalPages: number }> {
-    const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 20;
-
-    try {
-      if ((this.prisma as any).notification) {
-        const where: any = { userId };
-        if (query.unreadOnly) where.isRead = false;
-        if (query.priority) where.priority = query.priority.toUpperCase();
-        if (query.notificationType) where.notificationType = query.notificationType;
-
-        const [items, total] = await Promise.all([
-          (this.prisma as any).notification.findMany({
-            where,
-            orderBy: { createdAt: 'desc' },
-            skip: (page - 1) * limit,
-            take: limit,
-          }),
-          (this.prisma as any).notification.count({ where }),
-        ]);
-
-        return {
-          data: items.map(this.mapDbToRecord),
-          total,
-          page,
-          totalPages: Math.ceil(total / limit) || 1,
-        };
-      }
-    } catch (error) {}
-
-    let filtered = this.memoryStore.filter((n) => n.userId === userId);
-    if (query.unreadOnly) filtered = filtered.filter((n) => !n.isRead);
-    if (query.priority) filtered = filtered.filter((n) => n.priority.toUpperCase() === query.priority!.toUpperCase());
-    if (query.notificationType) filtered = filtered.filter((n) => n.notificationType === query.notificationType);
-
-    const total = filtered.length;
-    const startIndex = (page - 1) * limit;
-    const paginated = filtered.slice(startIndex, startIndex + limit);
-
-    return {
-      data: paginated,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit) || 1,
-    };
-  }
-
-  async markAsRead(id: string): Promise<NotificationRecord | null> {
-    const now = new Date();
-    try {
-      if ((this.prisma as any).notification) {
-        const updated = await (this.prisma as any).notification.update({
-          where: { id },
-          data: { isRead: true, readAt: now },
-        });
-        return this.mapDbToRecord(updated);
-      }
-    } catch (error) {}
-
-    const index = this.memoryStore.findIndex((n) => n.id === id);
-    if (index !== -1) {
-      this.memoryStore[index].isRead = true;
-      this.memoryStore[index].readAt = now.toISOString();
-      return this.memoryStore[index];
+  async findByDeduplicationKey(key: string): Promise<NotificationRecord | null> {
+    for (const record of this.store.values()) {
+      if (record.deduplicationKey === key) return record;
     }
     return null;
   }
 
-  async markAllAsRead(userId: string): Promise<number> {
-    const now = new Date();
-    try {
-      if ((this.prisma as any).notification) {
-        const result = await (this.prisma as any).notification.updateMany({
-          where: { userId, isRead: false },
-          data: { isRead: true, readAt: now },
-        });
-        return result.count;
-      }
-    } catch (error) {}
+  async findById(id: string): Promise<NotificationRecord | null> {
+    return this.store.get(id) || null;
+  }
 
+  async markAsRead(id: string): Promise<NotificationRecord | null> {
+    const record = this.store.get(id);
+    if (!record) return null;
+    record.isRead = true;
+    record.readAt = new Date();
+    this.store.set(id, record);
+    return record;
+  }
+
+  async markAllAsRead(userId: string): Promise<number> {
     let count = 0;
-    this.memoryStore.forEach((n) => {
-      if (n.userId === userId && !n.isRead) {
-        n.isRead = true;
-        n.readAt = now.toISOString();
+    for (const record of this.store.values()) {
+      if (record.userId === userId && !record.isRead) {
+        record.isRead = true;
+        record.readAt = new Date();
         count++;
       }
-    });
+    }
     return count;
   }
 
+  async query(query: NotificationQueryDto): Promise<PaginatedNotificationsResult> {
+    const { userId, isRead, priority, notificationType, search, page = 1, limit = 20 } = query;
+
+    let items = Array.from(this.store.values());
+
+    if (userId) items = items.filter((item) => item.userId === userId);
+    if (isRead !== undefined) items = items.filter((item) => item.isRead === isRead);
+    if (priority) items = items.filter((item) => item.priority.toLowerCase() === priority.toLowerCase());
+    if (notificationType) items = items.filter((item) => item.notificationType.toLowerCase() === notificationType.toLowerCase());
+
+    if (search) {
+      const q = search.toLowerCase();
+      items = items.filter(
+        (item) =>
+          item.title.toLowerCase().includes(q) ||
+          item.message.toLowerCase().includes(q) ||
+          item.notificationType.toLowerCase().includes(q),
+      );
+    }
+
+    // Sort descending by createdAt
+    items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    const total = items.length;
+    const unreadCount = items.filter((i) => !i.isRead).length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const startIndex = (page - 1) * limit;
+    const paginated = items.slice(startIndex, startIndex + limit);
+
+    return {
+      data: paginated,
+      total,
+      unreadCount,
+      page,
+      limit,
+      totalPages,
+    };
+  }
+
   async getStats(userId?: string): Promise<NotificationStats> {
-    const list = userId ? this.memoryStore.filter((n) => n.userId === userId) : this.memoryStore;
-    const totalNotifications = list.length;
-    const unreadCount = list.filter((n) => !n.isRead).length;
+    let items = Array.from(this.store.values());
+    if (userId) items = items.filter((i) => i.userId === userId);
 
     const byPriority: Record<string, number> = {};
     const byType: Record<string, number> = {};
+    let unread = 0;
 
-    list.forEach((n) => {
-      byPriority[n.priority] = (byPriority[n.priority] || 0) + 1;
-      byType[n.notificationType] = (byType[n.notificationType] || 0) + 1;
+    items.forEach((item) => {
+      if (!item.isRead) unread++;
+      byPriority[item.priority] = (byPriority[item.priority] || 0) + 1;
+      byType[item.notificationType] = (byType[item.notificationType] || 0) + 1;
     });
 
-    return { totalNotifications, unreadCount, byPriority, byType };
-  }
-
-  private mapDbToRecord(dbRecord: any): NotificationRecord {
     return {
-      id: dbRecord.id,
-      userId: dbRecord.userId,
-      leadId: dbRecord.leadId,
-      notificationType: dbRecord.notificationType,
-      title: dbRecord.title,
-      message: dbRecord.message,
-      isRead: dbRecord.isRead,
-      readAt: dbRecord.readAt,
-      actionUrl: dbRecord.actionUrl,
-      priority: dbRecord.priority,
-      metadata: typeof dbRecord.metadata === 'string' ? JSON.parse(dbRecord.metadata) : dbRecord.metadata,
-      createdAt: dbRecord.createdAt,
+      total: items.length,
+      unread,
+      byPriority,
+      byType,
     };
   }
 }

@@ -9,7 +9,7 @@ export class TimelineRepository {
   private readonly logger = new Logger(TimelineRepository.name);
   private readonly memoryStore: Map<string, TimelineEventRecord> = new Map();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma?: PrismaService) {}
 
   async create(data: Partial<TimelineEventRecord>): Promise<TimelineEventRecord> {
     const record: TimelineEventRecord = {
@@ -28,7 +28,7 @@ export class TimelineRepository {
       createdAt: new Date(),
     };
 
-    if (this.prisma.isConnected) {
+    if (this.prisma && this.prisma.isConnected) {
       try {
         const created = await this.prisma.timelineEvent.create({
           data: {
@@ -47,7 +47,7 @@ export class TimelineRepository {
           },
         });
         return this.mapPrismaToRecord(created);
-      } catch (error) {
+      } catch (error: any) {
         this.logger.warn(`Prisma error, falling back to memory store: ${error.message}`);
       }
     }
@@ -57,7 +57,7 @@ export class TimelineRepository {
   }
 
   async findByDeduplicationKey(key: string): Promise<TimelineEventRecord | null> {
-    if (this.prisma.isConnected) {
+    if (this.prisma && this.prisma.isConnected) {
       try {
         const found = await this.prisma.timelineEvent.findUnique({
           where: { deduplicationKey: key },
@@ -73,7 +73,7 @@ export class TimelineRepository {
   }
 
   async findById(id: string): Promise<TimelineEventRecord | null> {
-    if (this.prisma.isConnected) {
+    if (this.prisma && this.prisma.isConnected) {
       try {
         const found = await this.prisma.timelineEvent.findUnique({ where: { id } });
         return found ? this.mapPrismaToRecord(found) : null;
@@ -116,7 +116,7 @@ export class TimelineRepository {
   }
 
   private async getAllRecords(): Promise<TimelineEventRecord[]> {
-    if (this.prisma.isConnected) {
+    if (this.prisma && this.prisma.isConnected) {
       try {
         const records = await this.prisma.timelineEvent.findMany({
           orderBy: { occurredAt: 'desc' },
@@ -127,6 +127,7 @@ export class TimelineRepository {
 
     return Array.from(this.memoryStore.values());
   }
+
 
   private async queryStore(
     filterPredicate: (item: TimelineEventRecord) => boolean,

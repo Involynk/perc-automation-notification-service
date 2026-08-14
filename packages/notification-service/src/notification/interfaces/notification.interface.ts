@@ -5,78 +5,18 @@ export enum NotificationPriority {
   CRITICAL = 'critical',
 }
 
-export enum NotificationType {
-  LEAD_CREATED = 'new_lead',
-  NEW_LEAD = 'new_lead',
-  LEAD_ASSIGNED = 'lead_assigned',
-  REMINDER_DUE = 'followup_due',
-  FOLLOWUP_DUE = 'followup_due',
-  CALL_SCHEDULED = 'call_scheduled',
-  MEETING_SCHEDULED = 'meeting_scheduled',
-  CALL_MISSED = 'meeting_missed',
-  MEETING_MISSED = 'meeting_missed',
-  ADMISSION_COMPLETED = 'admission_completed',
-  PAYMENT_PENDING = 'payment_pending',
-  LEAD_LOST = 'lead_lost',
-  LEAD_RECOVERED = 'lead_recovered',
-  ESCALATION = 'escalation',
-  ESCALATION_TRIGGERED = 'escalation',
-  DAILY_SUMMARY = 'daily_summary',
-  WEEKLY_SUMMARY = 'weekly_summary',
-  CRITICAL_ALERT = 'critical_alert',
-}
-
-/**
- * Standardizes any incoming notification type string to match Supabase DB check constraint
- */
-export function normalizeNotificationType(type: string): string {
-  const map: Record<string, string> = {
-    LEAD_CREATED: 'new_lead',
-    NEW_LEAD: 'new_lead',
-    LEAD_ASSIGNED: 'lead_assigned',
-    REMINDER_DUE: 'followup_due',
-    FOLLOWUP_DUE: 'followup_due',
-    CALL_SCHEDULED: 'call_scheduled',
-    MEETING_SCHEDULED: 'meeting_scheduled',
-    CALL_MISSED: 'meeting_missed',
-    MEETING_MISSED: 'meeting_missed',
-    ADMISSION_COMPLETED: 'admission_completed',
-    PAYMENT_PENDING: 'payment_pending',
-    LEAD_LOST: 'lead_lost',
-    LEAD_RECOVERED: 'lead_recovered',
-    ESCALATION: 'escalation',
-    ESCALATION_TRIGGERED: 'escalation',
-    DAILY_SUMMARY: 'daily_summary',
-    WEEKLY_SUMMARY: 'weekly_summary',
-    CRITICAL_ALERT: 'critical_alert',
-    BROCHURE_SHARED: 'new_lead',
-    FOLLOWUP_OVERDUE: 'followup_due',
-    SYSTEM_ALERT: 'critical_alert',
-  };
-
-  const normalized = type ? type.toUpperCase() : '';
-  return map[normalized] || map[type] || 'new_lead';
-}
-
-/**
- * Standardizes priority string to match Supabase DB check constraint ('low', 'normal', 'high', 'critical')
- */
-export function normalizePriority(priority: string): string {
-  const p = (priority || 'normal').toLowerCase();
-  if (['low', 'normal', 'high', 'critical'].includes(p)) return p;
-  if (p === 'medium') return 'normal';
-  return 'normal';
-}
-
-export interface RawNotificationPayload {
-  userId: string;
-  leadId?: string;
-  notificationType: string;
-  title: string;
-  message: string;
-  priority?: string;
-  actionUrl?: string;
-  metadata?: Record<string, any>;
+export enum KnownNotificationType {
+  LEAD_CREATED = 'LEAD_CREATED',
+  LEAD_ASSIGNED = 'LEAD_ASSIGNED',
+  FOLLOWUP_DUE = 'FOLLOWUP_DUE',
+  CALL_SCHEDULED = 'CALL_SCHEDULED',
+  MEETING_MISSED = 'MEETING_MISSED',
+  ADMISSION_COMPLETED = 'ADMISSION_COMPLETED',
+  PAYMENT_PENDING = 'PAYMENT_PENDING',
+  LEAD_LOST = 'LEAD_LOST',
+  LEAD_RECOVERED = 'LEAD_RECOVERED',
+  ESCALATION_TRIGGERED = 'ESCALATION_TRIGGERED',
+  SYSTEM_ALERT = 'SYSTEM_ALERT',
 }
 
 export interface NotificationRecord {
@@ -87,16 +27,26 @@ export interface NotificationRecord {
   title: string;
   message: string;
   isRead: boolean;
-  readAt?: Date | string | null;
+  readAt?: Date | null;
   actionUrl?: string | null;
-  priority: string;
+  priority: NotificationPriority | string;
   metadata: Record<string, any>;
-  createdAt: Date | string;
+  deduplicationKey?: string | null;
+  createdAt: Date;
+}
+
+export interface PaginatedNotificationsResult {
+  data: NotificationRecord[];
+  total: number;
+  unreadCount: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface NotificationStats {
-  totalNotifications: number;
-  unreadCount: number;
+  total: number;
+  unread: number;
   byPriority: Record<string, number>;
   byType: Record<string, number>;
 }

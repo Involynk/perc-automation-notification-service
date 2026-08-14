@@ -1,111 +1,141 @@
-import { Injectable, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
-import { NotificationConsumerService } from '../consumer/notification-consumer.service';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { NotificationRepository } from '../repository/notification.repository';
-import { SendNotificationDto } from '../dto/send-notification.dto';
-import { QueryNotificationDto } from '../dto/query-notification.dto';
-import { NotificationRecord, NotificationStats, NotificationPriority, NotificationType } from '../interfaces/notification.interface';
-
-const DEMO_USER_ID = '550e8400-e29b-41d4-a716-446655440000';
-const DEMO_LEAD_ID = 'a0eebc99-9c0b-4ef8-bb6d-8b6d6bb9bd38';
-
-const DEMO_NOTIFICATIONS: SendNotificationDto[] = [
-  {
-    userId: DEMO_USER_ID,
-    leadId: DEMO_LEAD_ID,
-    notificationType: NotificationType.CALL_MISSED,
-    title: 'Urgent: Missed Counseling Call Alert',
-    message: 'Senior Advisor missed 1-on-1 counseling demo with prospect Aarav Sharma.',
-    priority: NotificationPriority.CRITICAL,
-    actionUrl: '/leads/detail/a0eebc99-9c0b-4ef8-bb6d-8b6d6bb9bd38',
-    metadata: { missedDurationSeconds: 120, channel: 'phone' },
-  },
-  {
-    userId: DEMO_USER_ID,
-    leadId: DEMO_LEAD_ID,
-    notificationType: NotificationType.LEAD_CREATED,
-    title: 'New High Priority Lead Ingested',
-    message: 'New inquiry for B.Tech CS captured from Google Search Ads.',
-    priority: NotificationPriority.HIGH,
-    actionUrl: '/leads/detail/a0eebc99-9c0b-4ef8-bb6d-8b6d6bb9bd38',
-    metadata: { campaign: 'Google_CS_2026', source: 'website_form' },
-  },
-  {
-    userId: DEMO_USER_ID,
-    leadId: DEMO_LEAD_ID,
-    notificationType: NotificationType.REMINDER_DUE,
-    title: 'Follow-up Call Scheduled Today',
-    message: 'Scheduled follow-up call with student parent regarding merit scholarship.',
-    priority: NotificationPriority.NORMAL,
-    actionUrl: '/calendar',
-    metadata: { scheduledTime: new Date().toISOString() },
-  },
-  {
-    userId: DEMO_USER_ID,
-    leadId: DEMO_LEAD_ID,
-    notificationType: NotificationType.ADMISSION_COMPLETED,
-    title: 'Student Enrollment Completed 🎉',
-    message: 'Student Aarav Sharma completed fee payment and enrollment papers.',
-    priority: NotificationPriority.HIGH,
-    actionUrl: '/admissions',
-    metadata: { batchId: 'batch_cs_2026_a' },
-  },
-];
+import { PreferenceService } from './preference.service';
+import { NotificationKafkaPublisherService } from '../kafka/notification-kafka-publisher.service';
+import { CreateNotificationDto, BroadcastNotificationDto } from '../dto/create-notification.dto';
+import { NotificationQueryDto } from '../dto/query-notification.dto';
+import {
+  NotificationRecord,
+  PaginatedNotificationsResult,
+  NotificationStats,
+} from '../interfaces/notification.interface';
 
 @Injectable()
-export class NotificationService implements OnModuleInit {
+export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
 
   constructor(
-    private readonly consumer: NotificationConsumerService,
     private readonly repository: NotificationRepository,
+    private readonly preferenceService: PreferenceService,
+    private readonly kafkaPublisher: NotificationKafkaPublisherService,
   ) {}
 
-  async onModuleInit() {
-    try {
-      const stats = await this.repository.getStats(DEMO_USER_ID);
-      if (stats.totalNotifications === 0) {
-        this.logger.log('Seeding initial demo notification inbox records...');
-        for (const notif of DEMO_NOTIFICATIONS) {
-          await this.consumer.consumeNotification(notif);
-        }
+  /**
+   * Create and deliver a single notification to a user
+   */
+  async createNotification(dto: CreateNotificationDto): Promise<NotificationRecord | null> {
+    // 1. Check deduplication
+    if (dto.deduplicationKey) {
+      const existing = await this.repository.findByDeduplicationKey(dto.deduplicationKey);
+      if (existing) {
+        this.logger.warn(`[NotificationEngine] Duplicate notification skipped: ${dto.deduplicationKey}`);
+        return existing;
       }
-    } catch (error) {
-      this.logger.warn(`Demo notification seeding skipped: ${error.message}`);
     }
+
+    // 2. Evaluate priority & title
+    const priority = this.preferenceService.normalizePriority(dto.notificationType, dto.priority);
+    const title = dto.title || this.preferenceService.getDefaultTitle(dto.notificationType);
+
+    // 3. Persist record
+    const record = await this.repository.create({
+      userId: dto.userId,
+      leadId: dto.leadId,
+      notificationType: dto.notificationType,
+      title,
+      message: dto.message,
+      priority,
+      actionUrl: dto.actionUrl,
+      metadata: dto.metadata || {},
+      deduplicationKey: dto.deduplicationKey,
+    });
+
+    this.logger.log(`[NotificationEngine] Created notification '${record.id}' for user '${record.userId}' (Priority: ${record.priority})`);
+
+    // 4. Broadcast via Kafka Outbox
+    try {
+      await this.kafkaPublisher.broadcastNotificationDelivered(record);
+    } catch (err: any) {
+      this.logger.warn(`Kafka broadcast error: ${err.message}`);
+    }
+
+    return record;
   }
 
-  async sendNotification(dto: SendNotificationDto): Promise<NotificationRecord> {
-    return this.consumer.consumeNotification(dto);
+  /**
+   * Broadcast a notification to all users matching a role (e.g. all counselors)
+   */
+  async broadcastNotification(dto: BroadcastNotificationDto): Promise<NotificationRecord[]> {
+    this.logger.log(`[NotificationEngine] Broadcasting '${dto.notificationType}' to role '${dto.targetRole}'`);
+
+    // In a production setup, we query users by role from the database.
+    // For demo/standard dispatch, we send to the role group:
+    const targetUserIds = [`usr-${dto.targetRole}-01`, `usr-${dto.targetRole}-02`];
+    const records: NotificationRecord[] = [];
+
+    for (const userId of targetUserIds) {
+      const record = await this.createNotification({
+        userId,
+        notificationType: dto.notificationType,
+        title: dto.title,
+        message: dto.message,
+        priority: dto.priority as any,
+        actionUrl: dto.actionUrl,
+        metadata: { ...(dto.metadata || {}), targetRole: dto.targetRole },
+      });
+      if (record) records.push(record);
+    }
+
+    return records;
   }
 
-  async getUserNotifications(userId: string, query: QueryNotificationDto) {
-    return this.repository.findByUserId(userId, query);
+  /**
+   * Query counselor inbox feed
+   */
+  async getInbox(query: NotificationQueryDto): Promise<PaginatedNotificationsResult> {
+    return this.repository.query(query);
   }
 
+  /**
+   * Mark a single notification as read
+   */
   async markAsRead(id: string): Promise<NotificationRecord> {
     const updated = await this.repository.markAsRead(id);
     if (!updated) throw new NotFoundException(`Notification '${id}' not found.`);
     return updated;
   }
 
-  async markAllAsRead(userId: string): Promise<{ success: boolean; count: number }> {
+  /**
+   * Mark all unread notifications for a user as read
+   */
+  async markAllAsRead(userId: string): Promise<{ success: boolean; updatedCount: number }> {
     const count = await this.repository.markAllAsRead(userId);
-    return { success: true, count };
+    return { success: true, updatedCount: count };
   }
 
-  async generateDailyDigest(userId: string): Promise<NotificationRecord> {
-    return this.sendNotification({
-      userId,
-      notificationType: NotificationType.DAILY_SUMMARY,
-      title: 'Daily Admission Operations Summary',
-      message: 'Summary report: 4 active inquiries, 2 pending calls, 1 completed enrollment today.',
-      priority: NotificationPriority.LOW,
-      actionUrl: '/analytics/daily-summary',
-      metadata: { generatedAt: new Date().toISOString() },
-    });
-  }
-
+  /**
+   * Get notification statistics
+   */
   async getStats(userId?: string): Promise<NotificationStats> {
     return this.repository.getStats(userId);
+  }
+
+  /**
+   * Generate daily operational activity digest
+   */
+  async getDailyDigest(userId: string): Promise<any> {
+    const stats = await this.getStats(userId);
+    const unread = await this.getInbox({ userId, isRead: false, limit: 5 });
+
+    return {
+      userId,
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalNotifications: stats.total,
+        unreadAlerts: stats.unread,
+        criticalAlertsCount: stats.byPriority['critical'] || 0,
+      },
+      topUnreadAlerts: unread.data,
+    };
   }
 }

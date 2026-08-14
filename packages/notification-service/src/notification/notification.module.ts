@@ -1,20 +1,26 @@
 import { Module } from '@nestjs/common';
 import { NotificationController } from './controller/notification.controller';
 import { NotificationService } from './service/notification.service';
-import { NotificationConsumerService } from './consumer/notification-consumer.service';
-import { PreferenceService } from './preference/preference.service';
+import { PreferenceService } from './service/preference.service';
 import { NotificationRepository } from './repository/notification.repository';
-import { PrismaService } from '../prisma/prisma.service';
+import { NotificationKafkaPublisherService } from './kafka/notification-kafka-publisher.service';
+import { NotificationKafkaConsumerService } from './kafka/notification-kafka-consumer.service';
 
 @Module({
   controllers: [NotificationController],
   providers: [
     NotificationService,
-    NotificationConsumerService,
     PreferenceService,
     NotificationRepository,
-    PrismaService,
+    NotificationKafkaPublisherService,
+    NotificationKafkaConsumerService,
   ],
-  exports: [NotificationService, NotificationConsumerService, PrismaService],
+  exports: [
+    NotificationService,
+    PreferenceService,
+    NotificationRepository,
+    NotificationKafkaPublisherService,
+    NotificationKafkaConsumerService,
+  ],
 })
 export class NotificationModule {}
