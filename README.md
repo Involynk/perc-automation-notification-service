@@ -193,17 +193,47 @@ model Notification {
 }
 ```
 
-### 4.3 REST Endpoints
+### 4.3 Kafka Architecture & Event Contracts
+
+The Notification Engine is Kafka-native, supporting asynchronous alert routing, auto-escalation, and DLQ handling:
+
+#### Input Topics (Domain Services ➔ Notification Engine)
+- **`perc.notification.send-requested`**: Targeted alert command for a specific user/counselor.
+- **`perc.notification.broadcast-requested`**: Role-wide announcement command (e.g. all counselors).
+- **`perc.notification.commands.dlq`**: Dead Letter Queue capturing unparseable payloads.
+
+#### Output Topic (Notification Engine ➔ Downstream Services)
+- **`perc.notification.notification-delivered`**: Broadcasts `NOTIFICATION_DELIVERED` event upon successful persistence. Consumed by **Timeline Engine (Engine 5)** to log in audit history, **Analytics Engine (Engine 9)** to track alert SLAs, and Frontend WebSockets.
+
+#### Kafka Notification Command Schema
+```json
+{
+  "eventId": "evt-notif-7a91b2c3-d4e5-4a1b-8c2d-3e4f5a6b7c8d",
+  "userId": "usr-counselor-priya",
+  "leadId": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+  "notificationType": "ESCALATION_TRIGGERED",
+  "priority": "CRITICAL",
+  "title": "Lead SLA Breached - Escalation",
+  "message": "Lead Rahul Kumar has received no response for > 2 hours. Immediate counseling callback required.",
+  "actionUrl": "/leads/1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+  "metadata": { "slaMinutes": 120, "channel": "whatsapp" },
+  "deduplicationKey": "dedup_notif_esc_101",
+  "occurredAt": "2026-08-14T15:45:00.000Z"
+}
+```
+
+### 4.4 REST Endpoints
 
 | Method | Endpoint Path | Summary | Description / Parameters |
 |---|---|---|---|
-| `POST` | `/api/v1/notifications/send` | Send Notification | Dispatches alert to user inbox (`SendNotificationDto`) |
-| `GET` | `/api/v1/notifications/user/:userId` | User Notifications Feed | Paginated inbox filtered by `unreadOnly`, `priority`, `notificationType` |
+| `POST` | `/api/v1/notifications/send` | Send Notification | Dispatches alert to user inbox (`CreateNotificationDto`) |
+| `POST` | `/api/v1/notifications/broadcast` | Broadcast Notification | Broadcasts notification to all users in a role (`BroadcastNotificationDto`) |
+| `GET` | `/api/v1/notifications` | Counselor Inbox Feed | Paginated inbox filtered by `userId`, `isRead`, `priority`, `notificationType` |
 | `PATCH` | `/api/v1/notifications/:id/read` | Mark Notification Read | Marks single notification as read and sets `readAt` timestamp |
-| `POST` | `/api/v1/notifications/read-all` | Mark All Read | Marks all unread notifications read for a specified user |
-| `POST` | `/api/v1/notifications/digest` | Daily Digest | Creates daily operations summary digest for counselor |
+| `PATCH` | `/api/v1/notifications/users/:userId/read-all` | Mark All Read | Marks all unread notifications read for a specified user |
 | `GET` | `/api/v1/notifications/stats` | Notification Stats | Priority and notification type volume breakdown |
-| `GET` | `/health` | Health Check | Service status and version information |
+| `GET` | `/api/v1/notifications/digest/:userId` | Daily Digest | Creates daily operations summary digest for counselor |
+
 
 ---
 

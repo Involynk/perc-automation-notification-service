@@ -149,6 +149,40 @@ export class KafkaProducerService {
     return this.sendMessage(KAFKA_TOPIC_TIMELINE_DLQ, partitionKey, dlqMessage);
   }
 
+  /**
+   * Publish a notification send command to Notification Engine (Engine 8)
+   * Topic: perc.notification.send-requested
+   */
+  async publishNotificationSend(input: import('./kafka.contracts').KafkaNotificationSendInput): Promise<{ success: boolean; eventId: string; error?: string }> {
+    const { KAFKA_TOPIC_NOTIFICATION_SEND } = require('./kafka.topics');
+    const partitionKey = input.userId || input.leadId || 'global';
+    const result = await this.sendMessage(KAFKA_TOPIC_NOTIFICATION_SEND, partitionKey, input);
+    return { success: result.success, eventId: input.eventId, error: result.error };
+  }
+
+  /**
+   * Publish a broadcast notification command to Notification Engine (Engine 8)
+   * Topic: perc.notification.broadcast-requested
+   */
+  async publishNotificationBroadcast(input: import('./kafka.contracts').KafkaNotificationBroadcastInput): Promise<{ success: boolean; eventId: string; error?: string }> {
+    const { KAFKA_TOPIC_NOTIFICATION_BROADCAST } = require('./kafka.topics');
+    const partitionKey = input.targetRole || 'broadcast';
+    const result = await this.sendMessage(KAFKA_TOPIC_NOTIFICATION_BROADCAST, partitionKey, input);
+    return { success: result.success, eventId: input.eventId, error: result.error };
+  }
+
+  /**
+   * Publish delivered notification event from Engine 8 to downstream services
+   * Topic: perc.notification.notification-delivered
+   */
+  async publishNotificationDelivered(output: import('./kafka.contracts').KafkaNotificationDeliveredOutput): Promise<{ success: boolean; notificationId: string; error?: string }> {
+    const { KAFKA_TOPIC_NOTIFICATION_DELIVERED } = require('./kafka.topics');
+    const partitionKey = output.userId || output.leadId || 'global';
+    const result = await this.sendMessage(KAFKA_TOPIC_NOTIFICATION_DELIVERED, partitionKey, output);
+    return { success: result.success, notificationId: output.notificationId, error: result.error };
+  }
+
+
   getInMemoryEvents(topic?: string) {
     if (!topic) return this.inMemoryBus;
     return this.inMemoryBus.filter((m) => m.topic === topic);

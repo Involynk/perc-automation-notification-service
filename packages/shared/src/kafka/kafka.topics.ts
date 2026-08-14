@@ -9,7 +9,11 @@ export const KAFKA_TOPIC_TIMELINE_EVENT_INGEST = 'perc.timeline.event-ingest-req
 export const KAFKA_TOPIC_TIMELINE_EVENT_RECORDED = 'perc.timeline.event-recorded';
 export const KAFKA_TOPIC_TIMELINE_APPEND_NOTE = 'perc.timeline.append-note-requested';
 export const KAFKA_TOPIC_TIMELINE_DLQ = 'perc.timeline.events.dlq';
-export const KAFKA_TOPIC_TIMELINE_COMMANDS_DLQ = 'perc.timeline.commands.dlq';
+// Notification Engine (Engine 8) Topics
+export const KAFKA_TOPIC_NOTIFICATION_SEND = 'perc.notification.send-requested';
+export const KAFKA_TOPIC_NOTIFICATION_BROADCAST = 'perc.notification.broadcast-requested';
+export const KAFKA_TOPIC_NOTIFICATION_DELIVERED = 'perc.notification.notification-delivered';
+export const KAFKA_TOPIC_NOTIFICATION_DLQ = 'perc.notification.commands.dlq';
 
 
 // Scheduler Engine (Engine 4) Topics
