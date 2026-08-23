@@ -1,13 +1,13 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Kafka, Consumer } from 'kafkajs';
 import {
-  KAFKA_TOPIC_NOTIFICATION_SEND,
-  KAFKA_TOPIC_NOTIFICATION_BROADCAST,
+  KAFKA_TOPIC_LEAD_CAPTURED,
+  KAFKA_TOPIC_MEETING_BOOKED,
+  KAFKA_TOPIC_SCHEDULER_TRIGGERED,
   KAFKA_GROUP_NOTIFICATION_ENGINE,
-  KafkaNotificationSendInput,
-  KafkaNotificationBroadcastInput,
 } from '@perc/shared';
 import { NotificationService } from '../service/notification.service';
+import { PushNotificationService } from '../service/push-notification.service';
 import { NotificationKafkaPublisherService } from './notification-kafka-publisher.service';
 
 @Injectable()
@@ -19,6 +19,7 @@ export class NotificationKafkaConsumerService implements OnModuleInit, OnModuleD
 
   constructor(
     private readonly notificationService: NotificationService,
+    private readonly pushService: PushNotificationService,
     private readonly publisher: NotificationKafkaPublisherService,
   ) {
     const brokersEnv = process.env.KAFKA_BROKERS;
@@ -54,12 +55,16 @@ export class NotificationKafkaConsumerService implements OnModuleInit, OnModuleD
       try {
         await this.consumer.connect();
         await this.consumer.subscribe({
-          topics: [KAFKA_TOPIC_NOTIFICATION_SEND, KAFKA_TOPIC_NOTIFICATION_BROADCAST],
+          topics: [
+            KAFKA_TOPIC_LEAD_CAPTURED,        // perc.lead-events (isNewLead === true)
+            KAFKA_TOPIC_MEETING_BOOKED,       // perc.meeting-events (meeting.booked)
+            KAFKA_TOPIC_SCHEDULER_TRIGGERED,  // perc.scheduler.timer-triggered (targetService === 'notification-service')
+          ],
           fromBeginning: false,
         });
 
         this.isRunning = true;
-        this.logger.log(`[Kafka Consumer] Subscribed to [${KAFKA_TOPIC_NOTIFICATION_SEND}, ${KAFKA_TOPIC_NOTIFICATION_BROADCAST}]`);
+        this.logger.log(`[Kafka Consumer] Subscribed to [${KAFKA_TOPIC_LEAD_CAPTURED}, ${KAFKA_TOPIC_MEETING_BOOKED}, ${KAFKA_TOPIC_SCHEDULER_TRIGGERED}]`);
 
         await this.consumer.run({
           eachMessage: async ({ topic, partition, message }) => {
@@ -71,10 +76,12 @@ export class NotificationKafkaConsumerService implements OnModuleInit, OnModuleD
 
             try {
               const payload = JSON.parse(rawValue);
-              if (topic === KAFKA_TOPIC_NOTIFICATION_SEND) {
-                await this.processSendNotification(payload, topic);
-              } else if (topic === KAFKA_TOPIC_NOTIFICATION_BROADCAST) {
-                await this.processBroadcastNotification(payload, topic);
+              if (topic === KAFKA_TOPIC_LEAD_CAPTURED) {
+                await this.processLeadCaptured(payload);
+              } else if (topic === KAFKA_TOPIC_MEETING_BOOKED) {
+                await this.processMeetingBooked(payload);
+              } else if (topic === KAFKA_TOPIC_SCHEDULER_TRIGGERED) {
+                await this.processTimerTriggered(payload);
               }
             } catch (err: any) {
               this.logger.error(`[Kafka Error] Failed to process message from ${topic}: ${err.message}`);
@@ -102,69 +109,117 @@ export class NotificationKafkaConsumerService implements OnModuleInit, OnModuleD
   }
 
   /**
-   * Processes a targeted send notification command
+   * 1. Subscribed to lead-capture-service (perc.lead-events)
+   * Dispatches Web Push alert to Sales / Admin team on new lead arrival
    */
-  async processSendNotification(input: KafkaNotificationSendInput, topic = KAFKA_TOPIC_NOTIFICATION_SEND): Promise<any> {
-    try {
-      this.validateSendInput(input);
-      return await this.notificationService.createNotification({
-        userId: input.userId,
-        leadId: input.leadId,
-        notificationType: input.notificationType,
-        title: input.title,
-        message: input.message,
-        priority: input.priority as any,
-        actionUrl: input.actionUrl,
-        metadata: input.metadata,
-        deduplicationKey: input.deduplicationKey,
+  private async processLeadCaptured(payload: any): Promise<void> {
+    if (!payload.isNewLead) return; // Only alert on new lead capture
+
+    const targetRole = process.env.SALES_TARGET_ROLE || 'sales';
+    const titleTemplate = process.env.TEMPLATE_NEW_LEAD_TITLE || '⚡ New Lead Alert';
+    const bodyTemplate = process.env.TEMPLATE_NEW_LEAD_BODY || 'New lead captured via {{channel}} (Lead ID: {{leadId}})';
+
+    const title = this.pushService.interpolateTemplate(titleTemplate, payload);
+    const body = this.pushService.interpolateTemplate(bodyTemplate, payload);
+
+    this.logger.log(`[Lead Captured] Dispatching Web Push alert to role '${targetRole}' for lead: ${payload.leadId}`);
+
+    // Real-time Web Push notification to Sales / Admin staff devices
+    await this.pushService.sendPushNotification({
+      targetRole,
+      title,
+      body,
+      data: { leadId: payload.leadId, channel: payload.channel, actionUrl: `/leads/${payload.leadId}` },
+    });
+
+    await this.notificationService.broadcastNotification({
+      targetRole,
+      notificationType: 'NEW_LEAD_ALERT',
+      title,
+      message: body,
+      priority: 'high' as any,
+      metadata: { leadId: payload.leadId, channel: payload.channel },
+    });
+  }
+
+  /**
+   * 2. Subscribed to meeting-service (perc.meeting-events)
+   * Dispatches Web Push alert to Admin host and Admin group when a meeting is booked
+   */
+  private async processMeetingBooked(payload: any): Promise<void> {
+    const { meetingId, leadId, meetingLink, scheduledAt, durationMinutes, organizerId } = payload;
+    const targetRole = process.env.ADMIN_TARGET_ROLE || 'admin';
+
+    const titleTemplate = process.env.TEMPLATE_MEETING_BOOKED_TITLE || '📅 Meeting Booked';
+    const bodyTemplate = process.env.TEMPLATE_MEETING_BOOKED_BODY || 'Meeting scheduled for {{scheduledAt}} ({{durationMinutes}} min). Join: {{meetingLink}}';
+
+    const title = this.pushService.interpolateTemplate(titleTemplate, payload);
+    const body = this.pushService.interpolateTemplate(bodyTemplate, payload);
+
+    this.logger.log(`[Meeting Booked] Dispatching Web Push notification for meeting: ${meetingId}`);
+
+    // Real-time Web Push dispatch to Admin / Host device
+    await this.pushService.sendPushNotification({
+      targetRole,
+      title,
+      body,
+      data: { meetingId, leadId, meetingLink, scheduledAt, actionUrl: meetingLink },
+    });
+
+    if (organizerId) {
+      await this.notificationService.createNotification({
+        userId: organizerId,
+        leadId,
+        notificationType: 'MEETING_BOOKED',
+        title,
+        message: body,
+        priority: 'high' as any,
+        metadata: { meetingId, meetingLink, scheduledAt, durationMinutes },
       });
-    } catch (err: any) {
-      this.logger.error(`[Kafka Notification Failure]: ${err.message}`);
-      await this.publisher.publishToDlq(topic, err.message, input);
-      throw err;
+    } else {
+      await this.notificationService.broadcastNotification({
+        targetRole,
+        notificationType: 'MEETING_BOOKED',
+        title,
+        message: body,
+        priority: 'high' as any,
+        metadata: { meetingId, leadId, meetingLink, scheduledAt },
+      });
     }
   }
 
   /**
-   * Processes a broadcast notification command
+   * 3. Subscribed to scheduler-service (perc.scheduler.timer-triggered)
+   * Dispatches real-time Web Push pre-meeting reminder when timer expires
    */
-  async processBroadcastNotification(input: KafkaNotificationBroadcastInput, topic = KAFKA_TOPIC_NOTIFICATION_BROADCAST): Promise<any> {
-    try {
-      this.validateBroadcastInput(input);
-      return await this.notificationService.broadcastNotification({
-        targetRole: input.targetRole,
-        notificationType: input.notificationType,
-        title: input.title,
-        message: input.message,
-        priority: input.priority as any,
-        actionUrl: input.actionUrl,
-        metadata: input.metadata,
-      });
-    } catch (err: any) {
-      this.logger.error(`[Kafka Broadcast Failure]: ${err.message}`);
-      await this.publisher.publishToDlq(topic, err.message, input);
-      throw err;
-    }
-  }
+  private async processTimerTriggered(payload: any): Promise<void> {
+    if (payload.targetService !== 'notification-service') return; // Strict service targeting guard
 
-  private validateSendInput(input: KafkaNotificationSendInput) {
-    if (!input.userId || typeof input.userId !== 'string') {
-      throw new BadRequestException('Validation Failed: userId must be a non-empty string.');
-    }
-    if (!input.notificationType || typeof input.notificationType !== 'string') {
-      throw new BadRequestException('Validation Failed: notificationType must be a non-empty string.');
-    }
-    if (!input.message || typeof input.message !== 'string') {
-      throw new BadRequestException('Validation Failed: message must be a non-empty string.');
-    }
-  }
+    const targetRole = process.env.ADMIN_TARGET_ROLE || 'admin';
+    const titleTemplate = process.env.TEMPLATE_PRE_MEETING_REMINDER_TITLE || '⏰ Pre-Meeting Reminder';
+    const bodyTemplate = process.env.TEMPLATE_PRE_MEETING_REMINDER_BODY || 'Upcoming meeting at {{scheduledAt}}. Join URL: {{meetingLink}}';
 
-  private validateBroadcastInput(input: KafkaNotificationBroadcastInput) {
-    if (!input.targetRole || typeof input.targetRole !== 'string') {
-      throw new BadRequestException('Validation Failed: targetRole must be a non-empty string.');
-    }
-    if (!input.message || typeof input.message !== 'string') {
-      throw new BadRequestException('Validation Failed: message must be a non-empty string.');
-    }
+    const opaque = payload.opaquePayload || {};
+    const title = this.pushService.interpolateTemplate(titleTemplate, opaque);
+    const body = this.pushService.interpolateTemplate(bodyTemplate, opaque);
+
+    this.logger.log(`[Timer Triggered] Executing pre-meeting Web Push reminder for lead: ${payload.correlationId}`);
+
+    // Immediate Web Push notification dispatch
+    await this.pushService.sendPushNotification({
+      targetRole,
+      title,
+      body,
+      data: { leadId: payload.correlationId, actionUrl: opaque.meetingLink || '/meetings' },
+    });
+
+    await this.notificationService.broadcastNotification({
+      targetRole,
+      notificationType: 'PRE_MEETING_REMINDER',
+      title,
+      message: body,
+      priority: 'high' as any,
+      metadata: opaque,
+    });
   }
 }

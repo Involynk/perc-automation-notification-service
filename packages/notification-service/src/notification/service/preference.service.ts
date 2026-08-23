@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { NotificationPriority } from '../interfaces/notification.interface';
+import { NotificationPriority, RawNotificationPayload } from '../interfaces/notification.interface';
 
 @Injectable()
 export class PreferenceService {
@@ -12,6 +12,18 @@ export class PreferenceService {
     'SLA_BREACHED',
     'LEAD_LOST_RISK',
   ]);
+
+  /**
+   * Evaluates notification dispatch policy and returns normalized parameters
+   */
+  shouldDispatch(payload: RawNotificationPayload): { dispatch: boolean; priority: string; notificationType: string } {
+    const priority = this.normalizePriority(payload.notificationType, payload.priority);
+    return {
+      dispatch: true,
+      priority,
+      notificationType: payload.notificationType,
+    };
+  }
 
   /**
    * Normalizes incoming priority string to enum constraint and applies auto-escalation rules

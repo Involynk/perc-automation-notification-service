@@ -6,11 +6,14 @@ import { NotificationRepository } from './repository/notification.repository';
 import { NotificationKafkaPublisherService } from './kafka/notification-kafka-publisher.service';
 import { NotificationKafkaConsumerService } from './kafka/notification-kafka-consumer.service';
 
+import { PushNotificationService } from './service/push-notification.service';
+
 @Module({
   controllers: [NotificationController],
   providers: [
     NotificationService,
     PreferenceService,
+    PushNotificationService,
     NotificationRepository,
     NotificationKafkaPublisherService,
     NotificationKafkaConsumerService,
@@ -18,6 +21,7 @@ import { NotificationKafkaConsumerService } from './kafka/notification-kafka-con
   exports: [
     NotificationService,
     PreferenceService,
+    PushNotificationService,
     NotificationRepository,
     NotificationKafkaPublisherService,
     NotificationKafkaConsumerService,

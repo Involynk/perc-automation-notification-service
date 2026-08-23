@@ -19,6 +19,17 @@ export enum KnownNotificationType {
   SYSTEM_ALERT = 'SYSTEM_ALERT',
 }
 
+export interface RawNotificationPayload {
+  userId: string;
+  leadId?: string | null;
+  notificationType: string;
+  title: string;
+  message: string;
+  priority?: string;
+  actionUrl?: string | null;
+  metadata?: Record<string, any>;
+}
+
 export interface NotificationRecord {
   id: string;
   userId: string;

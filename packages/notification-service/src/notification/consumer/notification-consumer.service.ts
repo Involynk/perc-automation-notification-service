@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { RawNotificationPayload, NotificationRecord } from '../interfaces/notification.interface';
-import { PreferenceService } from '../preference/preference.service';
+import { PreferenceService } from '../service/preference.service';
 import { NotificationRepository } from '../repository/notification.repository';
 
 @Injectable()

@@ -1,0 +1,41 @@
+# SERVICE_CONNECTIONS.yaml — notification-service
+# Format mirrors the master SERVICE_CONNECTIONS_MAP.yaml at the repo root.
+
+service: notification-service
+description: >
+  Real-time staff and admin Web Push / FCM alert engine. Dispatches immediate browser & mobile push alerts
+  to sales reps and admins using configurable notification body templates. Does NOT schedule timers itself.
+
+subscribes_to:
+  - topic: perc.lead-events
+    from_service: lead-capture-service
+    filter: "isNewLead === true"
+    action: "Dispatches real-time Web Push NEW_LEAD_ALERT to sales target role (SALES_TARGET_ROLE)"
+
+  - topic: perc.meeting-events
+    from_service: meeting-service
+    filter: "event === 'meeting.booked'"
+    action: "Dispatches real-time Web Push MEETING_BOOKED alert to assigned admin host (organizerId) and admin target role (ADMIN_TARGET_ROLE)"
+
+  - topic: perc.scheduler.timer-triggered
+    from_service: scheduler-service
+    filter: "targetService === 'notification-service'"
+    action: "Dispatches real-time Web Push PRE_MEETING_REMINDER when scheduler timer expires (1h before meeting)"
+
+produces:
+  - topic: perc.notification.notification-delivered
+    event: notification.delivered
+    kafka_key: notificationId
+    payload_schema:
+      eventId: string
+      notificationId: string
+      recipientId: string
+      channel: "web_push"
+      deliveredAt: string      # ISO 8601
+    subscribers:
+      - service: timeline-service
+        filter: none
+        action: "Logs NOTIFICATION_SENT audit entry in lead's journey timeline"
+      - service: analytics-service
+        filter: none
+        action: "Records notification delivery SLA metrics"
